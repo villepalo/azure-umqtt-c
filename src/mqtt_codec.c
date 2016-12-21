@@ -133,7 +133,8 @@ static int addListItemsToUnsubscribePacket(BUFFER_HANDLE ctrlPacket, const char*
     }
     else
     {
-        for (size_t index = 0; index < payloadCount && result == 0; index++)
+		size_t index;
+        for (index = 0; index < payloadCount && result == 0; index++)
         {
             // Add the Payload
             size_t offsetLen = BUFFER_length(ctrlPacket);
@@ -170,7 +171,8 @@ static int addListItemsToSubscribePacket(BUFFER_HANDLE ctrlPacket, SUBSCRIBE_PAY
     }
     else
     {
-        for (size_t index = 0; index < payloadCount && result == 0; index++)
+		size_t index;
+        for (index = 0; index < payloadCount && result == 0; index++)
         {
             // Add the Payload
             size_t offsetLen = BUFFER_length(ctrlPacket);
@@ -352,6 +354,7 @@ static int constructFixedHeader(BUFFER_HANDLE ctrlPacket, CONTROL_PACKET_TYPE pa
         size_t packetLen = BUFFER_length(ctrlPacket);
         uint8_t remainSize[4] ={ 0 };
         size_t index = 0;
+		BUFFER_HANDLE fixedHeader;
 
         // Calculate the length of packet
         do
@@ -366,7 +369,7 @@ static int constructFixedHeader(BUFFER_HANDLE ctrlPacket, CONTROL_PACKET_TYPE pa
             remainSize[index++] = encode;
         } while (packetLen > 0);
 
-        BUFFER_HANDLE fixedHeader = BUFFER_new();
+        fixedHeader = BUFFER_new();
         if (fixedHeader == NULL)
         {
             result = __LINE__;
@@ -405,6 +408,8 @@ static int constructConnPayload(BUFFER_HANDLE ctrlPacket, const MQTT_CLIENT_OPTI
         size_t willMessageLen = 0;
         size_t willTopicLen = 0;
         size_t spaceLen = 0;
+		size_t currLen;
+		size_t totalLen;
 
         if (mqttOptions->clientId != NULL)
         {
@@ -432,8 +437,8 @@ static int constructConnPayload(BUFFER_HANDLE ctrlPacket, const MQTT_CLIENT_OPTI
             willTopicLen = strlen(mqttOptions->willTopic);
         }
 
-        size_t currLen = BUFFER_length(ctrlPacket);
-        size_t totalLen = clientLen + usernameLen + passwordLen + willMessageLen + willTopicLen + spaceLen;
+        currLen = BUFFER_length(ctrlPacket);
+        totalLen = clientLen + usernameLen + passwordLen + willMessageLen + willTopicLen + spaceLen;
 
         // Validate the Username & Password
         if (clientLen > USHRT_MAX)
@@ -516,7 +521,7 @@ static int constructConnPayload(BUFFER_HANDLE ctrlPacket, const MQTT_CLIENT_OPTI
                 }
                 if (trace_log != NULL)
                 {
-                    (void)STRING_sprintf(trace_log, " %zu", packet[CONN_FLAG_BYTE_OFFSET]);
+                    (void)STRING_sprintf(trace_log, " %u", (unsigned int)packet[CONN_FLAG_BYTE_OFFSET]);
                     (void)STRING_concat_with_STRING(trace_log, connect_payload_trace);
                     STRING_delete(connect_payload_trace);
                 }
@@ -736,11 +741,12 @@ BUFFER_HANDLE mqtt_codec_publish(QOS_VALUE qosValue, bool duplicateMsg, bool ser
     else
     {
         PUBLISH_HEADER_INFO publishInfo ={ 0 };
-        publishInfo.topicName = topicName;
+        uint8_t headerFlags = 0;
+
+		publishInfo.topicName = topicName;
         publishInfo.packetId = packetId;
         publishInfo.qualityOfServiceValue = qosValue;
 
-        uint8_t headerFlags = 0;
         if (duplicateMsg) headerFlags |= PUBLISH_DUP_FLAG;
         if (serverRetain) headerFlags |= PUBLISH_QOS_RETAIN;
         if (qosValue != DELIVER_AT_MOST_ONCE)
@@ -800,7 +806,7 @@ BUFFER_HANDLE mqtt_codec_publish(QOS_VALUE qosValue, bool duplicateMsg, bool ser
                             memcpy(iterator, msgBuffer, buffLen);
                             if (trace_log)
                             {
-                                STRING_sprintf(varible_header_log, " | PAYLOAD_LEN: %zu", buffLen);
+                                STRING_sprintf(varible_header_log, " | PAYLOAD_LEN: %u", (unsigned int)buffLen);
                             }
                         }
                     }
@@ -1046,9 +1052,10 @@ int mqtt_codec_bytesReceived(MQTTCODEC_HANDLE handle, const unsigned char* buffe
     }
     else
     {
+		size_t index;
         /* Codes_SRS_MQTT_CODEC_07_033: [mqtt_codec_bytesReceived constructs a sequence of bytes into the corresponding MQTT packets and on success returns zero.] */
         result = 0;
-        for (size_t index = 0; index < size && result == 0; index++)
+        for (index = 0; index < size && result == 0; index++)
         {
             uint8_t iterator = ((int8_t*)buffer)[index];
             if (codec_Data->codecState == CODEC_STATE_FIXED_HEADER)
@@ -1089,11 +1096,13 @@ int mqtt_codec_bytesReceived(MQTTCODEC_HANDLE handle, const unsigned char* buffe
                     }
                     else
                     {
+						size_t totalLen;
+
                         // Increment the data
                         dataBytes += codec_Data->bufferOffset++;
                         *dataBytes = iterator;
 
-                        size_t totalLen = BUFFER_length(codec_Data->headerData);
+                        totalLen = BUFFER_length(codec_Data->headerData);
                         if (codec_Data->bufferOffset >= totalLen)
                         {
                             /* Codes_SRS_MQTT_CODEC_07_034: [Upon a constructing a complete MQTT packet mqtt_codec_bytesReceived shall call the ON_PACKET_COMPLETE_CALLBACK function.] */

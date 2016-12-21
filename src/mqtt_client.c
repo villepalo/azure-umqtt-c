@@ -63,9 +63,10 @@ static void on_connection_closed(void* context)
 static void close_connection(MQTT_CLIENT* mqtt_client)
 {
     size_t close_complete = 0;
-    (void)xio_close(mqtt_client->xioHandle, on_connection_closed, &close_complete);
-
     size_t counter = 0;
+
+	(void)xio_close(mqtt_client->xioHandle, on_connection_closed, &close_complete);
+
     do
     {
         xio_dowork(mqtt_client->xioHandle);
@@ -223,6 +224,9 @@ static void getLogTime(char* timeResult, size_t len)
         }
         else
         {
+#ifdef WINCE
+			timeResult[0] = '\0';
+#else
             struct tm* tmInfo = localtime(&agent_time);
             if (tmInfo == NULL)
             {
@@ -235,6 +239,7 @@ static void getLogTime(char* timeResult, size_t len)
                     timeResult[0] = '\0';
                 }
             }
+#endif
         }
     }
 }
@@ -254,10 +259,12 @@ static void logOutgoingingRawTrace(MQTT_CLIENT* mqtt_client, const uint8_t* data
     if (mqtt_client != NULL && data != NULL && length > 0 && mqtt_client->rawBytesTrace)
     {
         char tmBuffer[TIME_MAX_BUFFER];
+		size_t index;
+
         getLogTime(tmBuffer, TIME_MAX_BUFFER);
 
         LOG(LOG_TRACE, 0, "-> %s %s: ", tmBuffer, retrievePacketType((unsigned char)data[0]));
-        for (size_t index = 0; index < length; index++)
+        for (index = 0; index < length; index++)
         {
             LOG(LOG_TRACE, 0, "0x%02x ", data[index]);
         }
@@ -285,10 +292,12 @@ static void logIncomingRawTrace(MQTT_CLIENT* mqtt_client, CONTROL_PACKET_TYPE pa
         if (data != NULL && length > 0)
         {
             char tmBuffer[TIME_MAX_BUFFER];
+			size_t index;
+
             getLogTime(tmBuffer, TIME_MAX_BUFFER);
 
             LOG(LOG_TRACE, 0, "<- %s %s: 0x%02x 0x%02x ", tmBuffer, retrievePacketType((CONTROL_PACKET_TYPE)packet), (unsigned char)(packet | flags), length);
-            for (size_t index = 0; index < length; index++)
+            for (index = 0; index < length; index++)
             {
                 LOG(LOG_TRACE, 0, "0x%02x ", data[index]);
             }
@@ -335,13 +344,16 @@ static void onOpenComplete(void* context, IO_OPEN_RESULT open_result)
     {
         if (open_result == IO_OPEN_OK && !mqtt_client->socketConnected)
         {
+			STRING_HANDLE trace_log;
+			BUFFER_HANDLE connPacket;
+
             mqtt_client->packetState = CONNECT_TYPE;
             mqtt_client->socketConnected = true;
 
-            STRING_HANDLE trace_log = construct_trace_log_handle(mqtt_client);
+            trace_log = construct_trace_log_handle(mqtt_client);
 
             // Send the Connect packet
-            BUFFER_HANDLE connPacket = mqtt_codec_connect(&mqtt_client->mqttOptions, trace_log);
+            connPacket = mqtt_codec_connect(&mqtt_client->mqttOptions, trace_log);
             if (connPacket == NULL)
             {
                 LOG(LOG_ERROR, LOG_LINE, "Error: mqtt_codec_connect failed");
@@ -520,6 +532,9 @@ static void recvCompleteCallback(void* context, CONTROL_PACKET_TYPE packet, int 
                     if (mqtt_client->fnMessageRecv != NULL)
                     {
                         STRING_HANDLE trace_log = NULL;
+						uint8_t* initialPos;
+						size_t length;
+						char* topicName;
 
                         bool isDuplicateMsg = (flags & DUPLICATE_FLAG_MASK) ? true : false;
                         bool isRetainMsg = (flags & RETAIN_FLAG_MASK) ? true : false;
@@ -531,9 +546,9 @@ static void recvCompleteCallback(void* context, CONTROL_PACKET_TYPE packet, int 
                                 isRetainMsg ? 1 : 0, ENUM_TO_STRING(QOS_VALUE, qosValue) );
                         }
 
-                        uint8_t* initialPos = iterator;
-                        size_t length = len - (iterator - initialPos);
-                        char* topicName = byteutil_readUTF(&iterator, &length);
+                        initialPos = iterator;
+                        length = len - (iterator - initialPos);
+                        topicName = byteutil_readUTF(&iterator, &length);
                         if (topicName == NULL)
                         {
                             LOG(LOG_ERROR, LOG_LINE, "Publish MSG: failure reading topic name");
@@ -545,11 +560,13 @@ static void recvCompleteCallback(void* context, CONTROL_PACKET_TYPE packet, int 
                         }
                         else
                         {
-                            if (mqtt_client->logTrace)
+                            uint16_t packetId = 0;
+							MQTT_MESSAGE_HANDLE msgHandle;
+
+							if (mqtt_client->logTrace)
                             {
                                 STRING_sprintf(trace_log, " | TOPIC_NAME: %s", topicName);
                             }
-                            uint16_t packetId = 0;
                             length = len - (iterator - initialPos);
                             if (qosValue != DELIVER_AT_MOST_ONCE)
                             {
@@ -561,7 +578,7 @@ static void recvCompleteCallback(void* context, CONTROL_PACKET_TYPE packet, int 
                             }
                             length = len - (iterator - initialPos);
 
-                            MQTT_MESSAGE_HANDLE msgHandle = mqttmessage_create(packetId, topicName, qosValue, iterator, length);
+                            msgHandle = mqttmessage_create(packetId, topicName, qosValue, iterator, length);
                             if (msgHandle == NULL)
                             {
                                 LOG(LOG_ERROR, LOG_LINE, "failure in mqttmessage_create");
@@ -583,16 +600,18 @@ static void recvCompleteCallback(void* context, CONTROL_PACKET_TYPE packet, int 
                                 }
                                 else
                                 {
+									BUFFER_HANDLE pubRel;
+
                                     if (mqtt_client->logTrace)
                                     {
-                                        STRING_sprintf(trace_log, " | PAYLOAD_LEN: %zu", length);
+                                        STRING_sprintf(trace_log, " | PAYLOAD_LEN: %u", (unsigned int)length);
                                         log_incoming_trace(mqtt_client, trace_log);
                                         STRING_delete(trace_log);
                                     }
 
                                     mqtt_client->fnMessageRecv(msgHandle, mqtt_client->ctx);
 
-                                    BUFFER_HANDLE pubRel = NULL;
+                                    pubRel = NULL;
                                     if (qosValue == DELIVER_EXACTLY_ONCE)
                                     {
                                         pubRel = mqtt_codec_publishReceived(packetId);
@@ -639,6 +658,7 @@ static void recvCompleteCallback(void* context, CONTROL_PACKET_TYPE packet, int 
                             (packet == PUBREL_TYPE) ? MQTT_CLIENT_ON_PUBLISH_REL : MQTT_CLIENT_ON_PUBLISH_COMP;
 
                         PUBLISH_ACK publish_ack = { 0 };
+                        BUFFER_HANDLE pubRel = NULL;
                         publish_ack.packetId = byteutil_read_uint16(&iterator, len);
 
                         if (mqtt_client->logTrace)
@@ -650,7 +670,6 @@ static void recvCompleteCallback(void* context, CONTROL_PACKET_TYPE packet, int 
                             STRING_delete(trace_log);
                         }
 
-                        BUFFER_HANDLE pubRel = NULL;
                         mqtt_client->fnOperationCallback(mqtt_client, action, (void*)&publish_ack, mqtt_client->ctx);
                         if (packet == PUBREC_TYPE)
                         {
